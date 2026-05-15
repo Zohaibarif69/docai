@@ -3,13 +3,15 @@ import { useNavigate } from "react-router";
 import { Search, Brain, ArrowRight, Star, Shield, Clock, Users, ChevronRight, Stethoscope } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { DoctorCard } from "../components/DoctorCard";
-import { DOCTORS, SPECIALIZATIONS, AI_SEARCH_SUGGESTIONS } from "../data/mockData";
+import { SPECIALIZATIONS, AI_SEARCH_SUGGESTIONS } from "../data/mockData";
 import { Skeleton } from "../components/ui/skeleton";
+import { doctorsAPI } from "../../services/api";
 
 export function HomePage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [doctors, setDoctors] = useState<any[]>([]);
   const [showAI, setShowAI] = useState(false);
   const [aiResponse, setAIResponse] = useState("");
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -18,9 +20,22 @@ export function HomePage() {
   const [mode, setMode] = useState("All");
   const navigate = useNavigate();
 
+  // Fetch doctors on component mount
   useEffect(() => {
-    // Simulate initial loading
-    setTimeout(() => setLoaded(true), 800);
+    const fetchDoctors = async () => {
+      try {
+        const data = await doctorsAPI.getDoctors({
+          limit: 10,
+          skip: 0,
+        });
+        setDoctors(data);
+      } catch (error) {
+        console.error("Failed to fetch doctors:", error);
+      }
+      setLoaded(true);
+    };
+
+    fetchDoctors();
   }, []);
 
   useEffect(() => {
@@ -77,7 +92,7 @@ export function HomePage() {
     }, 30);
   };
 
-  const onlineCount = DOCTORS.filter((d) => d.isOnline).length;
+  const onlineCount = doctors.filter((d) => d.is_online).length;
 
   return (
     <div className="min-h-screen">
@@ -190,7 +205,7 @@ export function HomePage() {
                   {aiResponse.length > 30 && (
                     <div>
                       <p className="text-[#94A3B8] text-xs mb-3">Top Doctors Available Now:</p>
-                      {DOCTORS.filter((d) => d.isOnline).slice(0, 2).map((d) => (
+                      {doctors.filter((d) => d.is_online).slice(0, 2).map((d) => (
                         <div key={d.id} className="flex items-center gap-3 bg-white/10 rounded-xl p-3 mb-2">
                           <img src={d.image} className="w-10 h-10 rounded-lg object-cover" alt={d.name} />
                           <div className="flex-1">
@@ -346,7 +361,7 @@ export function HomePage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {DOCTORS.filter((d) => d.isOnline).slice(0, 4).map((doctor) => (
+              {doctors.filter((d) => d.is_online).slice(0, 4).map((doctor) => (
                 <DoctorCard key={doctor.id} doctor={doctor} />
               ))}
             </div>

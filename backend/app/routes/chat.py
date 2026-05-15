@@ -1,191 +1,116 @@
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket
-from sqlalchemy.orm import Session
-from typing import List
-from app.database.config import get_db
-from app.database.models import Message, Patient, Doctor
-from app.schemas.schemas import MessageCreate, MessageResponse, ChatHistoryResponse
-from app.utils.jwt_handler import verify_token
+from fastapi import APIRouter, Query, HTTPException, status
+from typing import List, Optional
+from datetime import datetime
+from uuid import uuid4
+from app.memory_state import get_doctor_by_id
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
-
-def get_current_patient(token: str, db: Session = Depends(get_db)):
-    """Get current patient from token"""
-    user_id = verify_token(token)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
-    
-    patient = db.query(Patient).filter(Patient.user_id == user_id).first()
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not a patient"
-        )
-    
-    return patient
+# In-memory message storage
+messages_db = {}
 
 
-@router.post("/send", response_model=MessageResponse)
+@router.post("/send", response_model=dict)
 def send_message(
-    message_data: MessageCreate,
-    token: str = None,
-    db: Session = Depends(get_db)
+    doctor_id: str = Query(...),
+    message_text: str = Query(...),
+    token: Optional[str] = Query(None)
 ):
     """
     Send a message to doctor
     """
-    patient = get_current_patient(token, db)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
     
     # Verify doctor exists
-    doctor = db.query(Doctor).filter(Doctor.id == message_data.doctor_id).first()
+    doctor = get_doctor_by_id(doctor_id)
     if not doctor:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Doctor not found"
         )
     
-    # Create message
-    message = Message(
-        patient_id=patient.id,
-        doctor_id=message_data.doctor_id,
-        sender_type="patient",
-        content=message_data.content
-    )
+    # Create message in memory
+    message_id = str(uuid4())
+    message = {
+        "id": message_id,
+        "doctor_id": doctor_id,
+        "message_text": message_text,
+        "is_patient_message": True,
+        "created_at": datetime.now().isoformat(),
+        "read": False
+    }
     
-    db.add(message)
-    db.commit()
-    db.refresh(message)
+    # Store message by conversation key
+    conv_key = f"{doctor_id}"
+    if conv_key not in messages_db:
+        messages_db[conv_key] = []
     
-    # TODO: Send notification to doctor
+    messages_db[conv_key].append(message)
     
-    return message
+    return {
+        "id": message_id,
+        "doctor_id": doctor_id,
+        "message_text": message_text,
+        "is_patient_message": True,
+        "created_at": datetime.now().isoformat()
+    }
 
 
-@router.get("/history/{doctor_id}", response_model=ChatHistoryResponse)
+@router.get("/history/{doctor_id}", response_model=List[dict])
 def get_chat_history(
-    doctor_id: int,
-    token: str = None,
-    db: Session = Depends(get_db)
+    doctor_id: str,
+    token: Optional[str] = Query(None)
 ):
     """
     Get chat history with a doctor
     """
-    patient = get_current_patient(token, db)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
     
     # Verify doctor exists
-    doctor = db.query(Doctor).filter(Doctor.id == doctor_id).first()
+    doctor = get_doctor_by_id(doctor_id)
     if not doctor:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Doctor not found"
         )
     
-    # Get messages
-    messages = db.query(Message).filter(
-        Message.patient_id == patient.id,
-        Message.doctor_id == doctor_id
-    ).order_by(Message.created_at.asc()).all()
+    conv_key = f"{doctor_id}"
+    messages = messages_db.get(conv_key, [])
     
-    # Mark messages as read
-    for msg in messages:
-        if msg.sender_type == "doctor" and not msg.is_read:
-            msg.is_read = True
-    db.commit()
-    
-    return ChatHistoryResponse(
-        messages=messages,
-        doctor=doctor
-    )
+    return messages
 
 
 @router.get("/list", response_model=List[dict])
-def get_chat_list(
-    token: str = None,
-    db: Session = Depends(get_db)
+def get_conversations(
+    token: Optional[str] = Query(None)
 ):
     """
-    Get list of all doctors patient has chatted with
+    Get list of all conversations
     """
-    patient = get_current_patient(token, db)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
     
-    # Get unique doctors patient has messages with
-    messages = db.query(Message).filter(
-        Message.patient_id == patient.id
-    ).order_by(Message.created_at.desc()).all()
-    
-    doctor_ids = set()
-    chat_list = []
-    
-    for msg in messages:
-        if msg.doctor_id not in doctor_ids:
-            doctor_ids.add(msg.doctor_id)
-            doctor = db.query(Doctor).filter(Doctor.id == msg.doctor_id).first()
-            
-            # Count unread messages
-            unread = db.query(Message).filter(
-                Message.patient_id == patient.id,
-                Message.doctor_id == msg.doctor_id,
-                Message.sender_type == "doctor",
-                Message.is_read == False
-            ).count()
-            
-            chat_list.append({
-                "id": msg.id,
-                "doctorId": doctor.id,
-                "doctorName": doctor.user.full_name,
-                "specialization": doctor.specialization,
-                "lastMessage": msg.content,
-                "time": msg.created_at.strftime("%H:%M"),
-                "unread": unread,
-                "image": None,
-                "isOnline": doctor.is_online
+    # Return summary of conversations
+    conversations = []
+    for doctor_id, msgs in messages_db.items():
+        if msgs:
+            last_msg = msgs[-1]
+            conversations.append({
+                "doctor_id": doctor_id,
+                "last_message": last_msg["message_text"],
+                "last_message_time": last_msg["created_at"],
+                "unread_count": len([m for m in msgs if not m["read"]])
             })
     
-    return chat_list
-
-
-@router.put("/mark-as-read/{doctor_id}")
-def mark_messages_as_read(
-    doctor_id: int,
-    token: str = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Mark all messages from doctor as read
-    """
-    patient = get_current_patient(token, db)
-    
-    messages = db.query(Message).filter(
-        Message.patient_id == patient.id,
-        Message.doctor_id == doctor_id,
-        Message.is_read == False
-    ).update({"is_read": True})
-    
-    db.commit()
-    
-    return {"message": f"Marked {messages} messages as read"}
-
-
-# WebSocket for real-time chat (optional)
-@router.websocket("/ws/{doctor_id}/{patient_id}")
-async def websocket_endpoint(
-    doctor_id: int,
-    patient_id: int,
-    websocket: WebSocket
-):
-    """
-    WebSocket endpoint for real-time messaging
-    TODO: Implement real-time messaging
-    """
-    await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_text()
-            # TODO: Save message to database
-            # TODO: Broadcast to doctor
-            await websocket.send_text(f"Message received: {data}")
-    except Exception as e:
-        print(f"WebSocket error: {e}")
+    return conversations

@@ -5,8 +5,9 @@ import {
   AlertTriangle, CreditCard, User, Mail, Phone, FileText
 } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { DOCTORS } from "../data/mockData";
+import { doctorsAPI, appointmentsAPI } from "../../services/api";
 import { toast } from "sonner";
+import { useAuth } from "../../context/AuthContext";
 
 const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTH_DATES = Array.from({ length: 14 }, (_, i) => {
@@ -34,16 +35,42 @@ export function AppointmentPage() {
   const { doctorId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const doctor = DOCTORS.find((d) => d.id === doctorId) || DOCTORS[0];
+  const { user } = useAuth();
+  const [doctor, setDoctor] = useState<any>(null);
 
   const [step, setStep] = useState<Step>(1);
   const [selectedDate, setSelectedDate] = useState(MONTH_DATES[0]);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(searchParams.get("time") || null);
   const [consultType, setConsultType] = useState<"Online" | "Physical">("Online");
   const [conflictSlot, setConflictSlot] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "Ali Khan", email: "ali.khan@email.com", phone: "+92 311 1234567", reason: "" });
+  const [form, setForm] = useState({ 
+    name: user?.full_name || "John Doe", 
+    email: user?.email || "john@example.com", 
+    phone: user?.phone || "+92 300 1234567", 
+    reason: "" 
+  });
   const [loading, setLoading] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
+
+  // Fetch doctor data on mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        if (doctorId) {
+          const doctorData = await doctorsAPI.getDoctorById(doctorId);
+          setDoctor(doctorData);
+        }
+      } catch (error) {
+        console.error("Failed to fetch doctor:", error);
+        toast.error("Failed to load doctor details");
+      } finally {
+        setPageLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [doctorId]);
 
   const aiSuggestions = [
     { label: "⚡ Earliest Available", time: "10:00 AM", note: "Today" },
@@ -61,14 +88,48 @@ export function AppointmentPage() {
     setConflictSlot(null);
   };
 
-  const handleBooking = () => {
+  const handleBooking = async () => {
+    if (!selectedSlot || !doctorId) return;
+
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const appointmentData = {
+        doctor_id: doctorId,
+        appointment_date: selectedDate.full,
+        appointment_time: selectedSlot,
+        appointment_type: consultType,
+        notes: form.reason,
+      };
+
+      await appointmentsAPI.createAppointment(appointmentData);
       setLoading(false);
       setConfirmed(true);
       toast.success("Appointment confirmed! Email sent.");
-    }, 1500);
+    } catch (error: any) {
+      setLoading(false);
+      toast.error(error.message || "Failed to book appointment");
+    }
   };
+
+  if (pageLoading) {
+    return (
+      <div className="max-w-lg mx-auto px-4 py-12">
+        <div className="text-center">
+          <div className="w-10 h-10 border-4 border-[#E2ECF8] border-t-[#1D6FA4] rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-[#64748B]">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!doctor) {
+    return (
+      <div className="max-w-lg mx-auto px-4 py-12 text-center">
+        <p className="text-[#64748B] mb-4">Doctor not found</p>
+        <Button onClick={() => navigate(-1)} className="bg-[#1D6FA4]">Go Back</Button>
+      </div>
+    );
+  }
 
   if (confirmed) {
     return (

@@ -7,6 +7,7 @@ import {
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import { Toaster } from "../components/ui/sonner";
+import { useAuth } from "../../context/AuthContext";
 
 type Mode = "login" | "signup";
 type Role = "patient" | "doctor";
@@ -14,20 +15,47 @@ type Role = "patient" | "doctor";
 export function AuthPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { login, register } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [role, setRole] = useState<Role>(searchParams.get("role") === "doctor" ? "doctor" : "patient");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "", specialization: "" });
+  const [error, setError] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
     setLoading(true);
-    setTimeout(() => {
+
+    try {
+      if (mode === "login") {
+        await login(form.email, form.password);
+        toast.success("Welcome back!");
+        setTimeout(() => navigate(role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard"), 800);
+      } else {
+        await register({
+          full_name: form.name,
+          email: form.email,
+          password: form.password,
+          phone: form.phone,
+        }, role);
+        toast.success("Account created successfully!");
+        setTimeout(() => navigate(role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard"), 800);
+      }
+    } catch (err: any) {
+      let errorMessage = "An error occurred. Please try again.";
+      if (err && typeof err === 'object') {
+        errorMessage = err.message || err.detail || JSON.stringify(err);
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+      setError(errorMessage);
+      toast.error(errorMessage);
+      console.error("Auth error:", err);
+    } finally {
       setLoading(false);
-      toast.success(mode === "login" ? "Welcome back!" : "Account created successfully!");
-      setTimeout(() => navigate(role === "doctor" ? "/doctor/dashboard" : "/patient/dashboard"), 800);
-    }, 1200);
+    }
   };
 
   return (
@@ -64,6 +92,13 @@ export function AuthPage() {
           </div>
 
           <div className="p-6">
+            {/* Error Message */}
+            {error && (
+              <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200">
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
+            )}
+
             {/* Role Selection */}
             <div className="mb-5">
               <p className="text-xs text-[#64748B] mb-2">I am a:</p>

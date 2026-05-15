@@ -5,7 +5,7 @@ import {
   Smile, MoreVertical, CheckCheck, Clock, Calendar
 } from "lucide-react";
 import { Button } from "../components/ui/button";
-import { DOCTORS, CHAT_MESSAGES } from "../data/mockData";
+import { doctorsAPI, chatAPI } from "../../services/api";
 
 type Message = {
   id: number;
@@ -17,54 +17,86 @@ type Message = {
 export function ChatPage() {
   const { doctorId } = useParams();
   const navigate = useNavigate();
-  const doctor = DOCTORS.find((d) => d.id === doctorId) || DOCTORS[0];
-  const [messages, setMessages] = useState<Message[]>(
-    CHAT_MESSAGES.map((m) => ({ ...m, sender: m.sender as "doctor" | "patient" }))
-  );
+  const [doctor, setDoctor] = useState<any>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [aiMode, setAiMode] = useState(!doctor.isOnline);
+  const [aiMode, setAiMode] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [offlineForm, setOfflineForm] = useState({ name: "", contact: "", problem: "" });
+  const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Fetch doctor data on mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        if (doctorId) {
+          const doctorData = await doctorsAPI.getDoctorById(doctorId);
+          setDoctor(doctorData);
+          setAiMode(!doctorData.is_online);
+          
+          // Try to fetch chat history
+          const history = await chatAPI.getChatHistory(doctorId);
+          setMessages(history || []);
+        }
+      } catch (error) {
+        console.error("Failed to load data:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [doctorId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const sendMessage = () => {
-    if (!input.trim()) return;
+  const sendMessage = async () => {
+    if (!input.trim() || !doctorId) return;
     const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const newMsg: Message = { id: Date.now(), sender: "patient", text: input, time: now };
     setMessages((prev) => [...prev, newMsg]);
     setInput("");
 
-    if (aiMode) {
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        const aiReplies = [
-          "Thank you for sharing that. Can you tell me more about when the symptoms started?",
-          "I understand. Based on what you've described, I recommend consulting with a specialist. Would you like me to find available doctors?",
-          "I've noted your concern. Please describe the severity on a scale of 1-10.",
-          "That's important information. I'll make sure Dr. " + doctor.name.split(" ")[1] + " reviews this when they're back online.",
-        ];
-        const reply = aiReplies[messages.length % aiReplies.length];
-        setMessages((prev) => [...prev, { id: Date.now(), sender: "ai", text: reply, time: now }]);
-      }, 1500);
-    } else {
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        const doctorReplies = [
-          "Thank you for the information. I'll review your case shortly.",
-          "Please take the prescribed dosage twice daily with meals.",
-          "I'd like to see you for a follow-up in 2 weeks. Please book an appointment.",
-          "The test results look normal. Continue with the current treatment plan.",
-        ];
-        const reply = doctorReplies[messages.length % doctorReplies.length];
-        setMessages((prev) => [...prev, { id: Date.now(), sender: "doctor", text: reply, time: now }]);
-      }, 2000);
+    try {
+      // Send message to backend
+      await chatAPI.sendMessage({
+        doctor_id: doctorId,
+        content: input,
+      });
+
+      if (aiMode) {
+        setIsTyping(true);
+        setTimeout(() => {
+          setIsTyping(false);
+          const aiReplies = [
+            "Thank you for sharing that. Can you tell me more about when the symptoms started?",
+            "I understand. Based on what you've described, I recommend consulting with a specialist. Would you like me to find available doctors?",
+            "I've noted your concern. Dr. " + (doctor?.name?.split(" ")[1] || "Smith") + " will review this when they're back online.",
+            "That's important information. Please describe the severity on a scale of 1-10.",
+          ];
+          const reply = aiReplies[messages.length % aiReplies.length];
+          setMessages((prev) => [...prev, { id: Date.now(), sender: "ai", text: reply, time: now }]);
+        }, 1500);
+      } else {
+        setIsTyping(true);
+        setTimeout(() => {
+          setIsTyping(false);
+          const doctorReplies = [
+            "Thank you for the information. I'll review your case shortly.",
+            "Please take the prescribed dosage twice daily with meals.",
+            "I'd like to see you for a follow-up in 2 weeks. Please book an appointment.",
+            "The test results look normal. Continue with the current treatment plan.",
+          ];
+          const reply = doctorReplies[messages.length % doctorReplies.length];
+          setMessages((prev) => [...prev, { id: Date.now(), sender: "doctor", text: reply, time: now }]);
+        }, 2000);
+      }
+    } catch (error) {
+      console.error("Failed to send message:", error);
     }
   };
 
@@ -72,6 +104,32 @@ export function ChatPage() {
     if (!offlineForm.name || !offlineForm.contact || !offlineForm.problem) return;
     setSubmitted(true);
   };
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        <div className="bg-white rounded-2xl border border-[#E2ECF8] overflow-hidden flex flex-col" style={{ height: "calc(100vh - 140px)", minHeight: 500 }}>
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="w-10 h-10 border-4 border-[#E2ECF8] border-t-[#1D6FA4] rounded-full animate-spin mx-auto mb-4" />
+              <p className="text-[#64748B]">Loading conversation...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!doctor) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        <div className="text-center py-12">
+          <p className="text-[#64748B] mb-4">Doctor not found</p>
+          <Button onClick={() => navigate(-1)} className="bg-[#1D6FA4]">Go Back</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">

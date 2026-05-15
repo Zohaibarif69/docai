@@ -4,7 +4,8 @@ import { Filter, SlidersHorizontal, Brain, MapPin, X, ChevronDown } from "lucide
 import { Button } from "../components/ui/button";
 import { DoctorCard } from "../components/DoctorCard";
 import { Skeleton } from "../components/ui/skeleton";
-import { DOCTORS, SPECIALIZATIONS } from "../data/mockData";
+import { SPECIALIZATIONS } from "../data/mockData";
+import { doctorsAPI } from "../../services/api";
 
 export function SearchResultsPage() {
   const [searchParams] = useSearchParams();
@@ -13,6 +14,7 @@ export function SearchResultsPage() {
   const specParam = searchParams.get("specialization") || "";
 
   const [loading, setLoading] = useState(true);
+  const [doctors, setDoctors] = useState<any[]>([]);
   const [city, setCity] = useState(cityParam);
   const [specialization, setSpecialization] = useState(specParam);
   const [availability, setAvailability] = useState<string[]>([]);
@@ -23,38 +25,50 @@ export function SearchResultsPage() {
   const [aiTip, setAiTip] = useState("");
 
   useEffect(() => {
-    setLoading(true);
-    setAiTip("");
-    const timeout = setTimeout(() => {
-      setLoading(false);
-      if (query) {
-        const tips: Record<string, string> = {
-          back: "Based on 'back pain', our AI recommends seeing an Orthopedic Surgeon or Neurologist. 3 doctors are available today.",
-          heart: "For heart-related concerns, we recommend a Cardiologist. 2 doctors are online right now.",
-          skin: "For skin issues, a Dermatologist is your best option. We found 4 available specialists.",
-        };
-        const tipKey = Object.keys(tips).find((k) => query.toLowerCase().includes(k));
-        setAiTip(tipKey ? tips[tipKey] : `Found ${DOCTORS.length} doctors matching "${query}"`);
+    const fetchDoctors = async () => {
+      setLoading(true);
+      setAiTip("");
+      try {
+        const data = await doctorsAPI.getDoctors({
+          specialization: specialization || undefined,
+          city: city !== "All Cities" ? city : undefined,
+          limit: 50,
+          skip: 0,
+        });
+        setDoctors(data);
+        
+        if (query) {
+          const tips: Record<string, string> = {
+            back: "Based on 'back pain', our AI recommends seeing an Orthopedic Surgeon or Neurologist. Doctors are available today.",
+            heart: "For heart-related concerns, we recommend a Cardiologist. Check available doctors below.",
+            skin: "For skin issues, a Dermatologist is your best option.",
+          };
+          const tipKey = Object.keys(tips).find((k) => query.toLowerCase().includes(k));
+          setAiTip(tipKey ? tips[tipKey] : `Found doctors matching "${query}"`);
+        }
+      } catch (error) {
+        console.error("Failed to fetch doctors:", error);
+        setAiTip("Failed to load doctors. Please try again.");
+      } finally {
+        setLoading(false);
       }
-    }, 1000);
-    return () => clearTimeout(timeout);
+    };
+
+    fetchDoctors();
   }, [query, city, specialization]);
 
   const toggleFilter = (arr: string[], val: string, setter: (a: string[]) => void) => {
     setter(arr.includes(val) ? arr.filter((v) => v !== val) : [...arr, val]);
   };
 
-  let filtered = DOCTORS.filter((d) => {
+  let filtered = doctors.filter((d) => {
     if (city !== "All Cities" && d.city !== city) return false;
     if (specialization && d.specialization !== specialization) return false;
     if (availability.length > 0 && !availability.some((a) => {
-      if (a === "Available Now") return d.availability === "Available Now";
-      if (a === "Today") return d.availability === "Today" || d.availability === "Available Now";
-      if (a === "Online") return d.isOnline;
+      if (a === "Online") return d.is_online;
       return true;
     })) return false;
-    if (consultType.length > 0 && !consultType.some((t) => d.consultationType.includes(t as any))) return false;
-    if (d.rating < ratingMin) return false;
+    if (ratingMin > 0 && d.rating < ratingMin) return false;
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()) &&
         !d.specialization.toLowerCase().includes(query.toLowerCase()) &&
         !d.city.toLowerCase().includes(query.toLowerCase())) return false;
@@ -62,9 +76,9 @@ export function SearchResultsPage() {
   });
 
   if (sortBy === "Rating") filtered = [...filtered].sort((a, b) => b.rating - a.rating);
-  else if (sortBy === "Experience") filtered = [...filtered].sort((a, b) => b.experience - a.experience);
-  else if (sortBy === "Fee: Low to High") filtered = [...filtered].sort((a, b) => a.fee - b.fee);
-  else if (sortBy === "Recommended") filtered = [...filtered].sort((a, b) => (b.isOnline ? 1 : 0) - (a.isOnline ? 1 : 0));
+  else if (sortBy === "Experience") filtered = [...filtered].sort((a, b) => b.experience_years - a.experience_years);
+  else if (sortBy === "Fee: Low to High") filtered = [...filtered].sort((a, b) => a.consultation_fee - b.consultation_fee);
+  else if (sortBy === "Recommended") filtered = [...filtered].sort((a, b) => (b.is_online ? 1 : 0) - (a.is_online ? 1 : 0));
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
